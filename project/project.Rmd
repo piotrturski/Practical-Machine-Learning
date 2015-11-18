@@ -1,0 +1,83 @@
+---
+title: "Human activity recognition using wearable sensors"
+author: "Piotr Turski"
+date: "November 14, 2015"
+output: html_document
+---
+
+### Summary
+We will try to build machine learning algorithm to predicting human activity using data from wearable sensors. We will use HAR dataset: http://groupware.les.inf.puc-rio.br/har. Downloadable data files: [training](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and [testing](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+### Partitioning and exploration
+
+```{r results='hide', message=F }
+all.data <- read.csv('pml-training.csv')
+to.predict <- read.csv('pml-testing.csv')
+
+library(caret)
+set.seed(1234)
+inTraining <- createDataPartition(all.data$X, p = 0.8, list = F)
+training <- all.data[inTraining,]
+testing <- all.data[-inTraining,]
+
+summary(training)
+```
+
+Summary shows that for some columns almost all (more than 95%) values are the same (NA, empty, 'no'). For example:
+
+```{r}
+summary(training[,c('new_window', 'skewness_roll_belt', 'amplitude_pitch_belt')])
+```
+
+### Building a model
+
+Let's try the easy way first:
+
+* Columns with almost only one value are probably not very useful for predicting. Let's remove them.
+
+* Also let's assume all users are similar and let's focus only on sensors, ignoring names and time series. This way we can do one single model for everyone instead of making individual model for each user.
+
+```{r}
+usefulness.treshold <- nrow(training) * 0.95
+useful.columns <- apply(training, 2, function(x){
+      sort(table(x, useNA='always'), decreasing=T)[1] < usefulness.treshold})
+useful.columns[1:7] <- F; # remove user names and time data
+
+training <- training[,useful.columns]
+```
+
+We'll start with random forest because it's pretty powerful, easy to apply of-the-shelf method. To get some numbers quickly we'll start with by-passing time consuming caret's `train` and use directly `randomForest` (maybe we'll get a model that is good enough). But this method doesn't support NAs. Let's see if we have to deal with any NAs in our data.
+
+```{r}
+table(c( complete.cases(all.data[,useful.columns]), complete.cases(to.predict[,useful.columns]) ))
+```
+
+All rows are complete (training, testing and data for new predictions) so we don't have to do any pre-processing like removing rows or imputing values. We can train the model:
+
+```{r echo=F, message=F}
+library(randomForest)
+```
+
+```{r cache=T, message=F, results='hold'}
+library(randomForest)
+system.time(fit <- randomForest(classe ~ ., data=training))
+fit
+```
+
+Random forest internally does cross-validation to estimate error rate. In our case it's 0.41%. We consider this model to be good enough so we will not go back to use more time consuming `train` with bootstrapping.
+
+### Out of sample error
+
+Let's do a final check and see how good our model performs on completely new data:
+```{r}
+predicted.classe <- predict(fit, testing)
+confusionMatrix(predicted.classe, testing$classe)
+```
+
+Out of sample error is: `r round(1 - confusionMatrix(predict(fit, testing[, useful.columns]), testing$classe)$overall['Accuracy'], 4) * 100`%
+
+### Predictions
+
+```{r results='hide'}
+predict(fit, to.predict)
+```
